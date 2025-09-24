@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 18
+VisualStudioVersion = 18.0.11018.127 d18.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LogFileCollector", "LogFileCollector.csproj", "{7554D49E-624B-487D-9722-E643196A4A9D}"
+EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Sublib", "..\Sublib\Sublib.fsproj", "{B205C044-4F8E-4B23-B71C-B36FF4F0CB88}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7554D49E-624B-487D-9722-E643196A4A9D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7554D49E-624B-487D-9722-E643196A4A9D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7554D49E-624B-487D-9722-E643196A4A9D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7554D49E-624B-487D-9722-E643196A4A9D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B205C044-4F8E-4B23-B71C-B36FF4F0CB88}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B205C044-4F8E-4B23-B71C-B36FF4F0CB88}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B205C044-4F8E-4B23-B71C-B36FF4F0CB88}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B205C044-4F8E-4B23-B71C-B36FF4F0CB88}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {B00C2797-F6A5-451F-B966-A2668D476499}
+	EndGlobalSection
+EndGlobal

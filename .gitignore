@@ -1,0 +1,14 @@
+**/bin/
+**/obj/
+*.exe
+*.dll
+Sublib/bin/
+Sublib/obj/
+Sublib/.vs/
+LogFileCollector/bin/
+LogFileCollector/.vs/
+LogFileCollector/obj/
+LogFileCollector/packages/
+CalibTracer/bin/
+CalibTracer/obj/
+CalibTracer/.vs/
