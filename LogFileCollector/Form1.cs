@@ -13,6 +13,7 @@ using Argus.IO;
 using System.Globalization;
 using Tango.Linq;
 using FileWatcherEx;
+using Microsoft.FSharp.Core;
 using Sublib;
 
 namespace LogFileCollector
@@ -118,7 +119,22 @@ namespace LogFileCollector
                 notifyIcon1.BalloonTipText = $"{Path.GetFileName(e.FullPath)} is changed.";
                 notifyIcon1.ShowBalloonTip(1000);
 
-                var timeStamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+                var n = DateTime.Now;
+                var timeStamp = n.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+                var dateStamp = n.ToString("yyyyMM", CultureInfo.InvariantCulture);
+
+                // check backup folder exists
+                var logBackUpPath1 = Path.Combine(curAppPath, "logBackup");
+                if (!Directory.Exists(logBackUpPath1))
+                {
+                    Directory.CreateDirectory(logBackUpPath1);
+                }
+                var logBackUpPath = Path.Combine(curAppPath, "logBackup", dateStamp);
+                if (!Directory.Exists(logBackUpPath))
+                {
+                    Directory.CreateDirectory(logBackUpPath);
+                }
+
                 Console.WriteLine("TimeCode : {0}", timeStamp);
                 var isDone = checkFileComplete(curFile);
                 Console.WriteLine("isDone : {0}", isDone);
@@ -137,61 +153,27 @@ namespace LogFileCollector
 
                     Console.WriteLine("start Log handle");
                     // handle logging
-                    handleHistoryForLog(fileName, timeStamp);
+                    handleHistoryForLog(fileName, timeStamp, dateStamp);
                 }                
-                
             }
         }
 
-        private string getBackdrillSetting()
+        private Task<string> getBackdrillSetting()
         {
-            var ollySetPath = @"c:\windows\ollytest.ini";
-            if (!File.Exists(ollySetPath)) return "";
-            var strLine = File.ReadLines(ollySetPath).TryFind(s => s.Contains("Backdrill capacity"));
-            var r = strLine.Match(
-                methodWhenSome: s => s,
-                methodWhenNone: () => ""
-            );
-            if (r == "") return "";
-            var l1 = r.Split('=');
-            if (l1.Length <= 1 || l1[1] == "") return "";
-            var l2 = l1[1].Split(',');
-            var peakZ = 0.0;
-            var peakC = 0.0;
-            var freq = "";
-            var freqIndex = 1;
-            if (l2.Length == 4)
-            {                
-                Int32.TryParse(l2[3], out freqIndex);
-            }
-            if (l2.Length >= 2)
-            {
-                Double.TryParse(l2[0], out peakC);
-                Double.TryParse(l2[1], out peakZ);
-            }
-            switch (freqIndex)
-            {                
-                case 0:
-                    freq = "2K";
-                    break;
-                case 2:
-                    freq = "8K";
-                    break;
-                case 3:
-                    freq = "16K";
-                    break;
-                default:
-                    freq = "4K";
-                    break;
-            }
-            var peakCStr = String.Format("{0:f1}", peakC) + "fF";
-            return String.Format("{0}_{1:f2}mm_{2}", peakCStr, peakZ, freq);
+            return Task.Run(() => {
+                var os = IniFile.GetBackDrillSetFromOllyTestIni();
+                if (FSharpOption<IniFile.OllySet>.get_IsNone(os))
+                {
+                    return "";
+                }
+                return os.Value.ToStr();
+            });
         }
                
-        private void handleHistoryForLog(string logfile, string timeCode)
+        private async void handleHistoryForLog(string logfile, string timeCode, string dateStampCode)
         {
             var isCTest = logfile.Contains("ctest");
-            var logBackUpPath = Path.Combine(curAppPath, "logBackup");
+            var logBackUpPath = Path.Combine(curAppPath, "logBackup", dateStampCode);
             if (!Directory.Exists(logBackUpPath))
             {
                 Directory.CreateDirectory(logBackUpPath);
@@ -199,10 +181,59 @@ namespace LogFileCollector
             if (isCTest)
             {
                 // check setting
-                var bdSet = getBackdrillSetting();
-                var nameIt = bdSet == "" ? "CAdjustLog" : $"CAdjustLog_{bdSet}";
-                File.Copy(logfile, Path.Combine(logBackUpPath, $"{timeCode}-{nameIt}.txt"));
-                
+                var bdSet = await getBackdrillSetting();
+                // log checking 
+                var task2 = Task.Run(() => { 
+                    return Cadjust.loadLogFile(logfile);
+                }); 
+
+                var nameIt = "";
+                var logdata = await task2;
+                if (logdata.measArr[0].Length == 0)
+                {
+                    // isCadjustLog
+                    nameIt = bdSet == "" ? "CAdjustLog" : $"CAdjustLog_{bdSet}";
+                } else
+                {
+                    nameIt = bdSet == "" ? "CVerifyLog" : $"CVerifyLog_{bdSet}";
+
+                    // evaluate log file
+                    var task3 = Task.Run(async () => {
+                        var (a, b, c) = IniFile.GetVerifyCheckSetting(curAppPath);
+                        var resultFile = $"{timeCode}-VerifyResult.txt";
+                        var nlogfile = Path.Combine(logBackUpPath, resultFile);
+                        var resMsg = "";
+                        try
+                        {
+                            var (resArr, msg) = Cadjust.evaluateLogData(logdata,a, b, c);
+                            resMsg = msg;
+                            this.Invoke(new Action(() => {
+                                var form2 = new Form2(resArr, Tuple.Create(a,b,c), resultFile);
+                                form2.TopMost = true;
+                                form2.ShowDialog(this);
+                            }));
+                        } catch (Exception ex)
+                        {
+                            this.Invoke(new Action(() => {
+                                MessageBox.Show(ex.ToString(), "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            }));
+                        }
+
+                        var task4 = Task.Run(() => {
+                            if (resMsg != "") File.WriteAllText(nlogfile, resMsg);
+                        });
+
+                        await task4;
+                    });
+
+                    await task3;
+                }
+                // backup log file
+                var task1 = Task.Run(() => { 
+                    File.Copy(logfile, Path.Combine(logBackUpPath, $"{timeCode}-{nameIt}.txt"));
+                });
+
+                await task1;
             } else
             {
                 File.Copy(logfile, Path.Combine(logBackUpPath, $"{timeCode}-CalibrationLog.txt"));

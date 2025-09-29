@@ -6,10 +6,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include="CLogLoader.fsx" />
     <Compile Include="Sublib.fs" />
+    <Compile Include="CadjustLog.fs" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="FSharp.Stats" Version="0.6.0" />
     <PackageReference Include="ini-parser" Version="2.5.2" />
   </ItemGroup>
 
