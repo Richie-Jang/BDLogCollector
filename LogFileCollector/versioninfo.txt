@@ -1,0 +1,4 @@
+2.0.1
+	2026-01-05
+	Sensor Range check changed : Variation checking rule until 40%
+	LSL : sigma * 1.5 more {50% more} because needle bigger is also good needle.

@@ -168,6 +168,7 @@ namespace LogFileCollector
             // 
             this.button4.Enabled = false;
             this.button4.Location = new System.Drawing.Point(19, 206);
+            this.button4.Margin = new System.Windows.Forms.Padding(3, 2, 3, 2);
             this.button4.Name = "button4";
             this.button4.Size = new System.Drawing.Size(119, 29);
             this.button4.TabIndex = 12;
@@ -191,7 +192,7 @@ namespace LogFileCollector
             this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
             this.Margin = new System.Windows.Forms.Padding(3, 4, 3, 4);
             this.Name = "Form1";
-            this.Text = "BDLog Collector V2.0.0";
+            this.Text = "BDLog Collector V2.0.2";
             this.FormClosed += new System.Windows.Forms.FormClosedEventHandler(this.Form1_FormClosed);
             this.contextMenuStrip1.ResumeLayout(false);
             this.ResumeLayout(false);

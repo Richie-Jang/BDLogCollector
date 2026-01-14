@@ -177,7 +177,8 @@ namespace LogFileCollector
             if (!Directory.Exists(logBackUpPath))
             {
                 Directory.CreateDirectory(logBackUpPath);
-            }            
+            }       
+            // is Ctest log?
             if (isCTest)
             {
                 // check setting
@@ -189,53 +190,79 @@ namespace LogFileCollector
 
                 var nameIt = "";
                 var logdata = await task2;
-                if (logdata.measArr[0].Length == 0)
+
+                if (logdata.expectedCap == 0.0 && logdata.statsArr.Length == 0)
+                {
+                    // wrong data received. cancelled
+                    return;
+                }
+
+                var isCadjustLog = logdata.measArr[0].Length == 0;
+
+                if (isCadjustLog)
                 {
                     // isCadjustLog
                     nameIt = bdSet == "" ? "CAdjustLog" : $"CAdjustLog_{bdSet}";
-                } else
+                }
+                else
                 {
                     nameIt = bdSet == "" ? "CVerifyLog" : $"CVerifyLog_{bdSet}";
-
-                    // evaluate log file
-                    var task3 = Task.Run(async () => {
-                        var (a, b, c) = IniFile.GetVerifyCheckSetting(curAppPath);
-                        var resultFile = $"{timeCode}-VerifyResult.txt";
-                        var nlogfile = Path.Combine(logBackUpPath, resultFile);
-                        var resMsg = "";
-                        try
-                        {
-                            var (resArr, msg) = Cadjust.evaluateLogData(logdata,a, b, c);
-                            resMsg = msg;
-                            this.Invoke(new Action(() => {
-                                var form2 = new Form2(resArr, Tuple.Create(a,b,c), resultFile);
-                                form2.TopMost = true;
-                                form2.ShowDialog(this);
-                            }));
-                        } catch (Exception ex)
-                        {
-                            this.Invoke(new Action(() => {
-                                MessageBox.Show(ex.ToString(), "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                            }));
-                        }
-
-                        var task4 = Task.Run(() => {
-                            if (resMsg != "") File.WriteAllText(nlogfile, resMsg);
-                        });
-
-                        await task4;
-                    });
-
-                    await task3;
                 }
-                // backup log file
+
                 var task1 = Task.Run(() => { 
                     File.Copy(logfile, Path.Combine(logBackUpPath, $"{timeCode}-{nameIt}.txt"));
                 });
 
                 await task1;
+                
+                // evaluate log file
+                var task3 = Task.Run(async () => {
+                    var (a, b, c) = IniFile.GetVerifyCheckSetting(curAppPath);
+                    var mm = isCadjustLog ? "CAdjust" : "CVerify";
+                    var resultFile = $"{timeCode}-{mm}_Result.txt";
+                    var nlogfile = Path.Combine(logBackUpPath, resultFile);
+                    var resMsg = "";
+                    try
+                    {
+                        var (resArr, msg) = Cadjust.evaluateLogData(logdata,a, b, c);
+                        resMsg = msg;
+                        this.Invoke(new Action(() => {
+                            var timer = new Timer();
+                            timer.Interval = 15000;
+                            var form2 = new Form2(resArr, Tuple.Create(a,b,c), resultFile, isCadjustLog);
+                            form2.TopMost = true;
+
+                            timer.Tick += (s, e) => {
+                                timer.Stop();
+                                timer.Dispose();
+                                form2.TopMost = false;
+                                if (form2.Visible)
+                                {
+                                    form2.Close();
+                                }
+                            };
+
+                            timer.Start();
+                            form2.ShowDialog(this);
+                        }));
+                    } catch (Exception ex)
+                    {
+                        this.Invoke(new Action(() => {
+                            MessageBox.Show(ex.ToString(), "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        }));
+                    }
+
+                    var task4 = Task.Run(() => {
+                        if (resMsg != "") File.WriteAllText(nlogfile, resMsg);
+                    });
+
+                    await task4;
+                });
+
+                await task3;               
             } else
             {
+                // is Calibration log
                 File.Copy(logfile, Path.Combine(logBackUpPath, $"{timeCode}-CalibrationLog.txt"));
             }
         }
@@ -280,15 +307,15 @@ namespace LogFileCollector
 
         // 경로 변경
         private void button1_Click(object sender, EventArgs e)
-        {            
+        {
+            stopLogWatcher();
+
             if (textBox2.Text == "" || !Directory.Exists(textBox2.Text))
             {
                 MessageBox.Show($"{textBox2.Text} Path not found!\r\nPlease change Path again", 
                     "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
-            }
-
-            stopLogWatcher();
+            }            
 
             checkPath = textBox2.Text;
             startMonitoring();

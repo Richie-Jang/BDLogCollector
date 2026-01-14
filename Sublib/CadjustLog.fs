@@ -6,6 +6,7 @@ open System.Text
 open System.Text.RegularExpressions
 open System.Collections.Generic
 open FSharp.Stats
+open FSharp.Stats.Distributions.Continuous
 
 module Cadjust =
 
@@ -35,7 +36,9 @@ module Cadjust =
         masterDataOpt: MasterData option
     }
 
-    let checkRangeForZVal = 1.3, 2.5
+    exception FactCheckErr of string
+
+    let checkRangeForZVal = 1.5, 2.6
     
     let headStrToInt (headstr: string): int =
         let add =
@@ -126,6 +129,7 @@ module Cadjust =
         /// peak z coordinate
         let mutable peakZCor = 0.0
         let mutable isCadjustLog = false
+        let mutable fileFinished = false
         
         let factors = Array.zeroCreate<double> 4
         let zCorrs = Array.zeroCreate<double> 4
@@ -174,9 +178,11 @@ module Cadjust =
                     zCorrs[hIndex] <- zc
 
             // end of readling parse factor lines
-            | a when readOk && (a.StartsWith("Measurements") || a.StartsWith("-----")) ||
-                    a.StartsWith("Finish") -> 
+            | a when readOk && (a.StartsWith("Measurements") || a.StartsWith("-----")) -> 
                 readOk <- false
+            | a when a.StartsWith("Finish") ->
+                readOk <- false
+                fileFinished <- true
            
             // data value line handling   
             | a when readOk && cap > 0 ->
@@ -198,40 +204,49 @@ module Cadjust =
                 
             | _ -> ()
         // for
-        let result = 
-            {
-                LogData.expectedCap = cap
-                zCoord = peakZCor 
-                measArr = meass |> Array.map(fun a -> a |> Seq.toArray)
-                statsArr = stats |> Array.map(fun a -> a |> Seq.toArray)
-                factors = factors
-                zCorrs = zCorrs
-                masterDataOpt = None
-            }
-        
-        let masterpath = 
-            let pp = Path.GetDirectoryName logfile
-            Path.Combine(pp, "cadjust-master.txt")
 
-        if result.measArr[0].Length = 0 then            
-            // is cajdust
-            saveMasterCadjustFile result masterpath 
-            result 
-        else
-            // is verify
-            if File.Exists masterpath then
-                let masterarr, facts = loadCadjustMasterFile masterpath
-                { result with masterDataOpt = Some masterarr; factors = facts }
+        if fileFinished then
+            let result = 
+                {
+                    LogData.expectedCap = cap
+                    zCoord = peakZCor 
+                    measArr = meass |> Array.map(fun a -> a |> Seq.toArray)
+                    statsArr = stats |> Array.map(fun a -> a |> Seq.toArray)
+                    factors = factors
+                    zCorrs = zCorrs
+                    masterDataOpt = None
+                }
+            
+            let masterpath = 
+                let pp = Path.GetDirectoryName logfile
+                Path.Combine(pp, "cadjust-master.txt")
+
+            if result.measArr[0].Length = 0 then            
+                // is cajdust
+                saveMasterCadjustFile result masterpath 
+                result 
             else
-                result
-        // if
+                // is verify
+                if File.Exists masterpath then
+                    let masterarr, facts = loadCadjustMasterFile masterpath
+                    { result with masterDataOpt = Some masterarr; factors = facts }
+                else
+                    result
+            // if
+        else
+            // something wrong.. 
+            { expectedCap = 0.0; zCoord = 0.0; measArr = Array.empty; statsArr = Array.empty; factors = Array.empty; zCorrs = Array.empty; masterDataOpt = None }
     // let loadLogFile
    
     /// ret: median, MAD (median absolute deviation) 
     let computeFactorStat (d: double array) =
         let m = Seq.median d 
-        let mad = Seq.map(fun v -> abs(v - m)) d |> Seq.median
-        m, mad
+        let mad = d |> Seq.map(fun v -> abs(v - m)) |> Seq.median
+        let min1, max1 = Seq.min d, Seq.max d
+        let width = max1 - min1
+        let variation = width / m * 100.0
+        // increasing 40%
+        if variation > 40.0 then 0.0, 0.0 else m, mad
         
     /// ret : average, stddev for ZCorr
     let computeZCorrStat (d: LogData) =
@@ -262,10 +277,17 @@ module Cadjust =
             
     /// ret : ok/false, (lsl, usl), errmsg
     let evaluateFactorRange (d: double array) sigmaval =
-        let a, b = computeFactorStat d
-        let lslv = a - sigmaval * b
+        let a, b = computeFactorStat d       
+        if a = 0.0 || b = 0.0 then 
+            let erdata = String.Join(",", d)
+            raise <| FactCheckErr($"Factor variation too large : {erdata}")
+        // LSL check added 50% more..
+        let lslv = 
+            let k = a - sigmaval * 1.5 * b
+            if k < 0.0 then 0.0 else k
         let uslv = a + sigmaval * b
-        let fails = d |> Array.indexed |> Array.filter(fun (_,v) -> v < lslv || v > uslv)        
+        // factor value small is fine ==> Sensor head is bigger..
+        let fails = d |> Array.indexed |> Array.filter(fun (_,v) -> lslv < v && v > uslv)        
         if fails.Length = 0 then
             true, (lslv, uslv), ""
         else
@@ -338,19 +360,26 @@ module Cadjust =
         
         // check2
         msg.AppendLine().Append("Needle Sensor range check ") |> ignore
-        let c,dd,e = evaluateFactorRange d.factors sigmaval
-        msg.AppendLine($"%.3f{fst dd} - %.3f{snd dd}:") |> ignore
-        if c then msg.AppendLine("Okay") |> ignore
-        else 
-            msg.AppendLine(e) |> ignore
+        try
+            let c,dd,e = evaluateFactorRange d.factors sigmaval
+            msg.AppendLine($"%.3f{fst dd} - %.3f{snd dd}:") |> ignore
+            if c then msg.AppendLine("Okay") |> ignore
+            else 
+                msg.AppendLine(e) |> ignore
+                checkResult[1] <- false
+        with
+        | FactCheckErr er -> 
             checkResult[1] <- false
- 
-        msg.AppendLine().AppendLine($"Accuracy check %.0f{accvalper}%% of Ref Value") |> ignore
-
-        // check3 : accuracy cvalue (3%)
-        let ck3, ck3msg = checkAccuracyCValue d (accvalper / 100.0)
-        checkResult[2] <- ck3 |> Array.forall(fun a -> a = true)
-        msg.AppendLine(ck3msg.ToString()) |> ignore
-        ck3msg.Clear() |> ignore
+            msg.AppendLine(er + "\nRange check failed") |> ignore
+        
+        // verify checking
+        if d.masterDataOpt.IsSome then
+            // check3 : accuracy cvalue (3%)
+            msg.AppendLine().AppendLine($"Accuracy check %.0f{accvalper}%% of Ref Value") |> ignore
+            let ck3, ck3msg = checkAccuracyCValue d (accvalper / 100.0)
+            checkResult[2] <- ck3 |> Array.forall(fun a -> a = true)
+            msg.AppendLine(ck3msg.ToString()) |> ignore
+            ck3msg.Clear() |> ignore
+        // if
         checkResult, msg.ToString()
     //evaluateLogData
