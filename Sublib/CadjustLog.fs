@@ -6,7 +6,6 @@ open System.Text
 open System.Text.RegularExpressions
 open System.Collections.Generic
 open FSharp.Stats
-open FSharp.Stats.Distributions.Continuous
 
 module Cadjust =
 
@@ -34,6 +33,7 @@ module Cadjust =
         /// cadjust zcorrection arr
         zCorrs : double array
         masterDataOpt: MasterData option
+        freq: int
     }
 
     exception FactCheckErr of string
@@ -64,6 +64,9 @@ module Cadjust =
         
     let saveMasterCadjustFile(d: LogData) (newpath: string) =
         use bw = File.CreateText newpath
+        bw.WriteLine($"//expected cap: {d.expectedCap:F2} fF");
+        bw.WriteLine($"//peak z: {d.zCoord:F2} mm");
+        bw.WriteLine($"//freq:{d.freq} KHz");
         // save factor
         bw.WriteLine($"//factor:{d.factors[0]},{d.factors[1]},{d.factors[2]},{d.factors[3]}")
         for i = 0 to 3 do
@@ -87,8 +90,10 @@ module Cadjust =
                     let b = a.Replace("//factor:", "").Trim().Split([|','|]) |> Array.map double
                     for i = 0 to 3 do
                         factors[i] <- b[i]
-                    //for
+                // other line / info ignored at the moment
+                | a when a.StartsWith("//expected") || a.StartsWith("//peak") || a.StartsWith("//freq") -> ()
                 | _ ->
+                    // data loading
                     let b = l.Split([|","|], StringSplitOptions.RemoveEmptyEntries)
                     if b.Length <> 4 then 
                         failwith $"master file is not correct format line {l}"
@@ -110,10 +115,18 @@ module Cadjust =
         let br = File.ReadLines(logfile)
         
         /// regex variables
+        // get head number
         let headReg = Regex("""head ([\dLR]+)""")
+        // get expected cap value
         let cReg = Regex("""([\d.]+) pF""")
+        // z line
         let zReg1 = Regex("""Z\s+Mean""")
+
         let zReg2 = Regex("""Z\s+1\s+2""")
+        let pzCoordReg = Regex("""([\d.]+) mm""")
+        let freqReg = Regex("""(\d+) Hz""")
+
+        // Head  0R:  Factor  0.7917 (old  0.8000), C offset  0.00 (old  0.00) fF, Z corr -0.051 (old -0.045) mm
         let factorReg = Regex("""Head\s+([\dLR]+):\s+Factor\s+([\d.]+).+Z corr\s+([\d.\-]+)""")
 
         /// throw exception possible
@@ -123,11 +136,13 @@ module Cadjust =
             m.Groups[1].Value |> headStrToInt
 
         let mutable curHeadNum = -1
+        // ok: start value data reading
         let mutable readOk = false
         /// expected capacity
         let mutable cap = 0.0
         /// peak z coordinate
         let mutable peakZCor = 0.0
+        let mutable freq = 0
         let mutable isCadjustLog = false
         let mutable fileFinished = false
         
@@ -147,9 +162,18 @@ module Cadjust =
             | a when a.StartsWith("Expected") -> 
                 let m = cReg.Match(a)
                 if m.Success then
-                    cap <- Convert.ToDouble(m.Groups[1].Value) |> double 
+                    cap <- Convert.ToDouble(m.Groups[1].Value) 
                 else
                     failwithf "%s can not parse" a
+            | a when a.StartsWith("Peak Z coord") ->
+                let m = pzCoordReg.Match(a)
+                if m.Success then
+                    peakZCor <- Convert.ToDouble(m.Groups[1].Value)
+
+            | a when a.StartsWith("Test freq") ->
+                let  m = freqReg.Match(a)
+                if m.Success then
+                    freq <- Convert.ToInt32(m.Groups[1].Value)
             
             // beginning
             | a when a.StartsWith("BACKDRILL MEAS") -> readOk <- false
@@ -157,17 +181,19 @@ module Cadjust =
             // head number parsing for Verify
             | a when a.StartsWith("Verification for") ->                
                 curHeadNum <- parseHead a
-                isCadjustLog <- false
+                isCadjustLog <- false  // verify log
                 
             // head number parsing for cadjust log
             | a when a.StartsWith("Mean measurements") ->
                 curHeadNum <- parseHead a
                 isCadjustLog <- true
-                
+            
+            // not important ( readOk true }
             | a when a.StartsWith("Z") ->
                  let zr = if isCadjustLog then zReg1 else zReg2
                  if zr.IsMatch(a) then readOk <- true else ()
 
+            // cadjust log contains factor lines
             | a when a.StartsWith("Head ") && a.Contains("Factor") ->
                 let m = factorReg.Match(a)
                 if m.Success then
@@ -179,6 +205,7 @@ module Cadjust =
 
             // end of readling parse factor lines
             | a when readOk && (a.StartsWith("Measurements") || a.StartsWith("-----")) -> 
+                // data reading end
                 readOk <- false
             | a when a.StartsWith("Finish") ->
                 readOk <- false
@@ -192,8 +219,10 @@ module Cadjust =
                     let bvals = b |> Array.map double
                     let index = indexByHeadNum curHeadNum
                     if bvals.Length = 3 then
+                        // cadjust
                         stats[index].Add(bvals[0], {mean = bvals[1]; stdDev = bvals[2]})
                     else
+                        // verify
                         let caps = bvals[1..10]
                         meass[index].Add(bvals[0], caps)
                         let meanv = Seq.average caps
@@ -209,24 +238,32 @@ module Cadjust =
             let result = 
                 {
                     LogData.expectedCap = cap
-                    zCoord = peakZCor 
+                    zCoord = peakZCor // z coordinate 
                     measArr = meass |> Array.map(fun a -> a |> Seq.toArray)
                     statsArr = stats |> Array.map(fun a -> a |> Seq.toArray)
                     factors = factors
                     zCorrs = zCorrs
                     masterDataOpt = None
+                    // add freq value Khz
+                    freq = freq / 1000
                 }
             
             let masterpath = 
                 let pp = Path.GetDirectoryName logfile
                 Path.Combine(pp, "cadjust-master.txt")
 
-            if result.measArr[0].Length = 0 then            
+            // bug fixed : verify log can not save as master file....
+            if isCadjustLog then            
                 // is cajdust
-                saveMasterCadjustFile result masterpath 
-                result 
+                if result.statsArr[0].Length > 0 then
+                    saveMasterCadjustFile result masterpath 
+                    result 
+                else
+                    raise <| Exception("Cadjust has no stat information..something wrong")
             else
                 // is verify
+                if result.measArr[0].Length = 0 then
+                    raise <| Exception("Verify log has no measurement information..something wrong")
                 if File.Exists masterpath then
                     let masterarr, facts = loadCadjustMasterFile masterpath
                     { result with masterDataOpt = Some masterarr; factors = facts }
@@ -235,7 +272,7 @@ module Cadjust =
             // if
         else
             // something wrong.. 
-            { expectedCap = 0.0; zCoord = 0.0; measArr = Array.empty; statsArr = Array.empty; factors = Array.empty; zCorrs = Array.empty; masterDataOpt = None }
+            { expectedCap = 0.0; zCoord = 0.0; measArr = Array.empty; statsArr = Array.empty; factors = Array.empty; zCorrs = Array.empty; masterDataOpt = None; freq = freq }
     // let loadLogFile
    
     /// ret: median, MAD (median absolute deviation) 

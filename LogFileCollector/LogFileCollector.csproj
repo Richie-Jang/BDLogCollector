@@ -135,6 +135,7 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="aethera.ico" />
+    <Content Include="versioninfo.txt" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Sublib\Sublib.fsproj">

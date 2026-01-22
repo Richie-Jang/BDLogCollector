@@ -108,7 +108,8 @@ namespace LogFileCollector
         }
 
         private void LogWatcher_OnChanged(object sender, FileChangedEvent e)
-        {            
+        {           
+            // cal or ctest log file
             var curFile = new FileInfo(e.FullPath);
             var fileName = e.FullPath.ToLower();
             Console.WriteLine("{0} FileName", fileName);
@@ -136,13 +137,15 @@ namespace LogFileCollector
                 }
 
                 Console.WriteLine("TimeCode : {0}", timeStamp);
-                var isDone = checkFileComplete(curFile);
-                Console.WriteLine("isDone : {0}", isDone);
+                var isLogSavedOk = checkFileComplete(curFile);
 
-                if (isDone)
+                textBox1.Invoke(new Action(() => {
+                    textBox1.AppendText($"Log saved Done : {isLogSavedOk}");
+                }));
+
+                if (isLogSavedOk)
                 {
                     Console.WriteLine("Update UI");
-
                     textBox1.Invoke(new Action(() => {
                         if (textBox1.Lines.Length > 10)
                         {
@@ -158,6 +161,7 @@ namespace LogFileCollector
             }
         }
 
+        // loading olly ini file..
         private Task<string> getBackdrillSetting()
         {
             return Task.Run(() => {
@@ -183,21 +187,37 @@ namespace LogFileCollector
             {
                 // check setting
                 var bdSet = await getBackdrillSetting();
-                // log checking 
-                var task2 = Task.Run(() => { 
-                    return Cadjust.loadLogFile(logfile);
-                }); 
-
                 var nameIt = "";
-                var logdata = await task2;
+                // log checking 
+                var task2 = Task.Run(() => {
+                    return Cadjust.loadLogFile(logfile);
+                });
 
-                if (logdata.expectedCap == 0.0 && logdata.statsArr.Length == 0)
+                Cadjust.LogData logData = null;
+
+                try
+                {
+                    logData = await task2;
+                } catch(Exception e)
+                {
+                    MessageBox.Show(e.Message+"\r\nSkip handle", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    logData = null;
+                }
+
+                if (logData == null) return;
+
+                if (logData.expectedCap == 0.0 && logData.statsArr.Length == 0)
                 {
                     // wrong data received. cancelled
                     return;
                 }
 
-                var isCadjustLog = logdata.measArr[0].Length == 0;
+                var isCadjustLog = logData.measArr[0].Length == 0;
+
+                if (bdSet == "")
+                {
+                    bdSet = $"{logData.expectedCap:F2}fF_{logData.zCoord:F2}mm_{logData.freq}KHz";
+                }
 
                 if (isCadjustLog)
                 {
@@ -224,7 +244,7 @@ namespace LogFileCollector
                     var resMsg = "";
                     try
                     {
-                        var (resArr, msg) = Cadjust.evaluateLogData(logdata,a, b, c);
+                        var (resArr, msg) = Cadjust.evaluateLogData(logData,a, b, c);
                         resMsg = msg;
                         this.Invoke(new Action(() => {
                             var timer = new Timer();
@@ -267,23 +287,28 @@ namespace LogFileCollector
             }
         }
         
+        // log file completed ok or not check
         private bool checkFileComplete(FileInfo f)
         {
-            Console.WriteLine("checkfileComplete");
+            Console.WriteLine("checkfileComplete started");
             try
             {
                 using (var rf = new ReverseFileReader(f.OpenRead()))
                 {
                     var line = rf.ReadLine().Trim();
-                    if (line == null) return false;
                     while (line == "")
                     {
+                        // if line is empty, read again.
                         line = rf.ReadLine().Trim();
-                        if (line == null) { return false; }
-                    }
+                    }                   
                     if (line.Contains("Bye!") || (line.Contains("Finish on")))
                     {
+                        // log saved successfully
                         return true;
+                    } else
+                    {
+                        // something wrong.. no finished line found.
+                        return false;
                     }
                 }                
             } catch (Exception)
@@ -291,7 +316,6 @@ namespace LogFileCollector
                 Console.WriteLine("File Exception error");
                 return false;
             }
-            return false;
         }
 
         private void Form1_FormClosed(object sender, FormClosedEventArgs e)
